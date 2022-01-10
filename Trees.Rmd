@@ -1,0 +1,190 @@
+---
+title: 'Regression Tree & Random Forest'
+author: 'Victoria Okereke'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#importing libraries
+library(faraway)
+library(visdat)
+library(olsrr)
+library(lmtest)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(caret)
+library(kernlab)
+library(ipred)
+#setting seed
+set.seed(123)
+```
+
+Data Exploration
+```{r}
+#reading in dataset
+data("uswages")
+#viewing data structure
+str(uswages)
+#viewing first 6 rows of data
+head(uswages)
+#viewing the pattern of missingness
+vis_miss(uswages)
+```
+
+
+No missing data so we do not need to worry about missingness.
+
+A careful review of the data shows that columns ne, mw, so, and we seem to have been coded from the same categorical variable so we will drop one of them from the model
+
+```{r}
+#dropping the 'we' variable
+uswages_reduced = uswages[-c(9)]
+```
+
+Now let us fit the regression tree model
+
+```{r}
+set.seed(123)
+#Splitting data into train and test
+split_data = createDataPartition(y = uswages_reduced$wage, p = .9, list = FALSE)
+train_data = uswages_reduced[split_data,]
+test_data = uswages_reduced[-split_data,]
+```
+
+```{r}
+set.seed(123)
+#fitting the model to the train set and setting cp to 0 to
+#allow the tree to grow very deep
+uswages_tree = rpart(wage ~ ., data = train_data,cp=0)
+uswages_tree
+```
+```{r}
+#plotting the tree
+rpart.plot(uswages_tree, digits = 3)
+```
+
+Now let's measure the performance of the model
+
+First let's measure the in-sample performance
+
+```{r}
+#predicting on the train set
+uswages_train_pred = predict(uswages_tree, train_data)
+```
+
+```{r}
+#Measuring performance on the train set with the mean absolute error
+MAE_train = mean(abs(train_data$wage - uswages_train_pred))
+MAE_train
+```
+
+We have a Mean Absolute Error of 215.4881 in-sample
+
+Now let's measure the out-of-sample MAE
+
+```{r}
+#predicting on the test set
+uswages_test_pred = predict(uswages_tree, test_data)
+
+#Measuring performance on the test set with the mean absolute error
+uswages_tree_MAE = mean(abs(test_data$wage - uswages_test_pred))
+uswages_tree_MAE
+```
+
+
+The MAE of the model on the test data is 302.0125. There is a huge difference between the in-sample and out-of-sample performance. We are most likely overfitting to the training set.
+
+Let's see if we can improve the performance of the model by pruning the tree.
+
+```{r}
+#to decide where to prune the tree
+printcp(uswages_tree)
+plotcp(uswages_tree)
+```
+
+
+We have the lowest xerror of (0.77175) at cp = 0.0038980
+
+Let's prune the tree with this cp value
+
+```{r}
+pruned_tree = prune(uswages_tree,cp=0.0038980)
+rpart.plot(pruned_tree)
+```
+
+```{r}
+#predicting on the test set
+pruned_test_pred = predict(pruned_tree, test_data)
+
+#Measuring performance on the test set with the mean absolute error
+pruned_tree_MAE = mean(abs(test_data$wage - pruned_test_pred))
+pruned_tree_MAE
+```
+
+The Mean Absolute Error out of sample is 284.2735, which is lower and better than the un-pruned tree.
+
+Note that rpart function in R automatically prunes the tree. Let's see how well the model will perform if we use rpart function without making any modifications to the cp value
+
+```{r}
+rpart_tree = rpart(wage ~ ., data = train_data)
+rpart_tree
+```
+```{r}
+rpart.plot(rpart_tree)
+```
+
+From the tree plot above, we see that years of education plays a very important role in predicting wages. Individuals with less years of education have smaller wage than individuals with higher years of education. Individuals with lower years of experience also have smaller wage. We also see that individuals working part-time make lower wages compared to the full-time workers.
+
+```{r}
+#predicting on the test set
+rpart_tree_pred = predict(rpart_tree, test_data)
+
+#Measuring performance on the test set with the mean absolute error
+rpart_MAE = mean(abs(test_data$wage - rpart_tree_pred))
+rpart_MAE
+```
+
+We have an even lower MAE of 277.2074
+
+
+Let's use Random Forest to predict wages
+
+```{r}
+set.seed(123)
+#fitting the model on the train dataset
+uswages_rf = randomForest(wage ~ ., data = train_data, mtry = 3,
+                         importance = TRUE)
+uswages_rf
+```
+
+```{r}
+#predict wage on the test dataset
+pred_rf = predict(uswages_rf,test_data)
+#Measuring performance on the test set with mean absolute error
+MAE_rf = mean(abs(test_data$wage - pred_rf))
+MAE_rf
+```
+
+
+The % Var explained (Rsquared) is 25.12, which is the variance explained in the out-of-bag sample. MAE for the test set is 274.0344. Comparing the Random Forest results with the Regression Tree result, we see that the Random Forest outperformed the Regression Tree.
+
+```{r}
+rf_result = caret::MAE(pred_rf, test_data$wage)
+rt_result = caret::MAE(rpart_tree_pred, test_data$wage)
+
+library(kableExtra)
+
+table_data <- rbind(rf_result,rt_result)
+rownames(table_data) <- c("Random Forest", "Regression Tree")
+kable(table_data, digits = 3, align = "c", booktabs = TRUE,
+      caption = "Comparing the 2 models")
+
+```
